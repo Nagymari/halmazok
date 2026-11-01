@@ -23,10 +23,55 @@ function render(){const x=QUESTIONS[current];$('step').textContent=(current+1)+'
 $('begin').onclick=()=>{let name=$('student').value.trim(),klass=$('klass').value.trim();if(name.length<2||klass.length<1){alert('Add meg a nevedet/azonosítódat és az osztályodat!');return}sessionStorage.setItem('halmazok_name',name);sessionStorage.setItem('halmazok_class',klass);$('start').classList.add('hidden');$('quiz').classList.remove('hidden');$('timer').classList.remove('hidden');startAt=Date.now();ticker=setInterval(()=>{$('timer').textContent=clock(Math.floor((Date.now()-startAt)/1000))},500);render()};
 $('confirm').onclick=()=>{if(selected<0||locked)return;locked=true;const x=QUESTIONS[current],good=selected===x.c;if(good)score++;results.push({question:current+1,correct:good});[...$('answers').children].forEach((el,i)=>{el.disabled=true;if(i===x.c)el.classList.add('correct');else if(i===selected)el.classList.add('wrong')});$('feedback').textContent=(good?'Helyes! ':'Most nem sikerült. ')+x.e;$('feedback').className='feedback'+(good?'':' bad');$('confirm').classList.add('hidden');$('next').classList.remove('hidden');$('next').textContent=current===QUESTIONS.length-1?'Eredmény megtekintése':'Következő feladat'};
 $('next').onclick=()=>{current++;if(current<QUESTIONS.length)render();else finish()};
-async function finish(){clearInterval(ticker);elapsed=Math.max(1,Math.floor((Date.now()-startAt)/1000));$('quiz').classList.add('hidden');$('timer').classList.add('hidden');$('done').classList.remove('hidden');$('finalScore').textContent=score+'/'+QUESTIONS.length;$('finalTime').textContent=clock(elapsed);$('finalPercent').textContent=Math.round(score/QUESTIONS.length*100)+'%';$('review').textContent='Helyes válaszok: '+results.filter(r=>r.correct).length+'. Hibás válaszok: '+results.filter(r=>!r.correct).map(r=>r.question+'.').join(', ')+(results.every(r=>r.correct)?' – hibátlan munka!':'');let record={name:sessionStorage.getItem('halmazok_name'),klass:sessionStorage.getItem('halmazok_class'),score,total:QUESTIONS.length,seconds:elapsed,finishedAt:new Date().toISOString()};$('saveStatus').textContent=endpoint?'Eredmény beküldése folyamatban…':'Demó üzemmód: az eredmény csak ezen a készüléken látható. A közös táblához beállítás szükséges.';if(endpoint){try{await fetch(endpoint,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({...record,action:'submit'})});$('saveStatus').textContent='Az eredményt elküldtük. A beérkezést a tanári Google Táblázatban ellenőrizheted. (A böngésző nem kap visszaigazolást a mentésről.)';}catch(e){$('saveStatus').textContent='Nem sikerült elküldeni az eredményt. Ellenőrizd a kapcsolatot, és szólj a tanárnak.'}}else{let local=JSON.parse(localStorage.getItem('halmazok_demo')||'[]');local.push(record);localStorage.setItem('halmazok_demo',JSON.stringify(local))}loadBoard()}
+function sendResult(record){
+  return new Promise((resolve,reject)=>{
+    const frame=document.createElement('iframe'); frame.name='halmaz_post_'+Date.now(); frame.style.display='none';
+    const form=document.createElement('form'); form.method='POST'; form.action=endpoint; form.target=frame.name; form.style.display='none';
+    const field=document.createElement('input'); field.name='payload'; field.value=JSON.stringify({...record,action:'submit'}); form.append(field);
+    document.body.append(frame,form);
+    // A Google kereszt-domain válaszát nem olvassuk. A mentést a rangsorból ellenőrizzük.
+    form.submit(); setTimeout(()=>{form.remove();frame.remove();resolve()},1800);
+  });
+}
+async function finish(){
+ clearInterval(ticker);elapsed=Math.max(1,Math.floor((Date.now()-startAt)/1000));
+ $('quiz').classList.add('hidden');$('timer').classList.add('hidden');$('done').classList.remove('hidden');
+ $('finalScore').textContent=score+'/'+QUESTIONS.length;$('finalTime').textContent=clock(elapsed);$('finalPercent').textContent=Math.round(score/QUESTIONS.length*100)+'%';
+ $('review').textContent='Helyes válaszok: '+results.filter(r=>r.correct).length+'. Hibás válaszok: '+results.filter(r=>!r.correct).map(r=>r.question+'.').join(', ')+(results.every(r=>r.correct)?' – hibátlan munka!':'');
+ let record={name:sessionStorage.getItem('halmazok_name'),klass:sessionStorage.getItem('halmazok_class'),score,total:QUESTIONS.length,seconds:elapsed,finishedAt:new Date().toISOString(),submissionId:(crypto.randomUUID?crypto.randomUUID():String(Date.now())+'_'+Math.random())};
+ if(!endpoint){let local=JSON.parse(localStorage.getItem('halmazok_demo')||'[]');local.push(record);localStorage.setItem('halmazok_demo',JSON.stringify(local));$('saveStatus').textContent='Demó üzemmód: az eredmény csak ezen a készüléken látható.';loadBoard();return}
+ $('saveStatus').textContent='Eredmény elküldése és ellenőrzése…';
+ try{
+   await sendResult(record);
+   let found=false;
+   for(let i=0;i<5;i++){
+     await new Promise(r=>setTimeout(r,1100));
+     try{let data=await getLeaderboard();if(data.ok){drawBoard(data.rows||[]);if((data.rows||[]).some(r=>r.submissionId===record.submissionId)){found=true;break}}}catch(e){}
+   }
+   $('saveStatus').textContent=found?'Sikeres mentés! Az eredményed bekerült a közös táblázatba.':'A mentést nem sikerült visszaigazolni. Szólj a tanárnak, és ellenőrizzétek a Google Táblázatot.';
+ }catch(e){$('saveStatus').textContent='Nem sikerült elküldeni az eredményt. Szólj a tanárnak.'}
+ loadBoard();
+}
 $('again').onclick=()=>location.reload();
 function safeCell(row,value){let td=document.createElement('td');td.textContent=value;row.append(td)}
 function drawBoard(rows){let arr=[...rows];arr.sort((a,b)=>sortMode==='score'?(b.score-a.score||a.seconds-b.seconds):(a.seconds-b.seconds||b.score-a.score));$('leaderRows').replaceChildren();arr.slice(0,30).forEach((r,i)=>{let tr=document.createElement('tr');[i+1,r.name,r.klass,r.score+'/'+r.total,clock(r.seconds)].forEach(v=>safeCell(tr,v));$('leaderRows').append(tr)});if(!arr.length)$('leaderStatus').textContent='Még nincs megjeleníthető eredmény.';else $('leaderStatus').textContent=arr.length+' befejezett próbálkozás. A lista az első 30-at mutatja.'}
-async function loadBoard(){if(!endpoint){drawBoard(JSON.parse(localStorage.getItem('halmazok_demo')||'[]'));$('leaderStatus').textContent+=' (Csak ezen a böngészőn tárolt demóadatok.)';return}try{$('leaderStatus').textContent='Eredmények betöltése…';let response=await fetch(endpoint+'?action=leaderboard&v='+Date.now());if(!response.ok)throw Error('HTTP '+response.status);let data=await response.json();if(!data.ok)throw Error(data.error||'Hibás válasz');drawBoard(data.rows||[])}catch(e){$('leaderStatus').textContent='Nem sikerült betölteni a közös eredményeket. Ellenőrizd az Apps Script beállítását és a hozzáférést.'}}
+function getLeaderboard(){
+ return new Promise((resolve,reject)=>{
+   const cb='halmazCb_'+Date.now()+'_'+Math.floor(Math.random()*1e6);
+   const tag=document.createElement('script');
+   let done=false;
+   const cleanup=()=>{delete window[cb];tag.remove();clearTimeout(timer)};
+   const timer=setTimeout(()=>{if(!done){done=true;cleanup();reject(Error('Időtúllépés'))}},12000);
+   window[cb]=data=>{if(!done){done=true;cleanup();resolve(data)}};
+   tag.onerror=()=>{if(!done){done=true;cleanup();reject(Error('Hálózati hiba'))}};
+   tag.src=endpoint+'?action=leaderboard&callback='+encodeURIComponent(cb)+'&v='+Date.now();
+   document.head.append(tag);
+ });
+}
+async function loadBoard(){
+ if(!endpoint){drawBoard(JSON.parse(localStorage.getItem('halmazok_demo')||'[]'));$('leaderStatus').textContent+=' (Csak ezen a böngészőn tárolt demóadatok.)';return}
+ try{$('leaderStatus').textContent='Eredmények betöltése…';let data=await getLeaderboard();if(!data.ok)throw Error(data.error||'Hibás válasz');drawBoard(data.rows||[])}
+ catch(e){$('leaderStatus').textContent='Nem sikerült betölteni a közös eredményeket. Ellenőrizd, hogy az új Code.gs verziót telepítetted-e.'}
+}
 $('byScore').onclick=()=>{sortMode='score';loadBoard()};$('byTime').onclick=()=>{sortMode='time';loadBoard()};$('refresh').onclick=loadBoard();$('configNotice').textContent=endpoint?'Közös eredménytábla bekapcsolva.':'Az eredménytábla jelenleg helyi demó üzemmódban működik.';loadBoard();
 </script></body></html>
